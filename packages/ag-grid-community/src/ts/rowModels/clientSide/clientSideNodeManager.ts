@@ -1,4 +1,3 @@
-
 import {RowNode} from "../../entities/rowNode";
 import {Utils as _} from "../../utils";
 import {GridOptionsWrapper} from "../../gridOptionsWrapper";
@@ -120,7 +119,9 @@ export class ClientSideNodeManager {
         let rowNodeTransaction: RowNodeTransaction = {
             remove: [],
             update: [],
-            add: []
+            add: [],
+            timeSort: !!rowDataTran.timeSort,
+            forceFullSort: !!rowDataTran.forceFullSort
         };
 
         if (_.exists(add)) {

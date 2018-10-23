@@ -33,18 +33,35 @@ export class ValueService {
                     rowNode: RowNode,
                     forFilter = false,
                     ignoreAggData = false): any {
+        return this.getDataValue(column, rowNode, rowNode.data, forFilter, ignoreAggData);
+    }
+
+    public getOldValue(column: Column,
+                       rowNode: RowNode,
+                       forFilter = false,
+                       ignoreAggData = false): any {
+        return this.getDataValue(column, rowNode, rowNode.getOldData(), forFilter, ignoreAggData);
+    }
+
+
+    private getDataValue(column: Column,
+                         rowNode: RowNode,
+                         data: any,
+                         forFilter = false,
+                         ignoreAggData = false): any {
 
         // console.log(`turnActive = ${this.turnActive}`);
 
         // hack - the grid is getting refreshed before this bean gets initialised, race condition.
         // really should have a way so they get initialised in the right order???
-        if (!this.initialised) { this.init(); }
+        if (!this.initialised) {
+            this.init();
+        }
 
         // pull these out to make code below easier to read
         let colDef = column.getColDef();
         let field = colDef.field;
         let colId = column.getId();
-        let data = rowNode.data;
 
         let result: any;
 

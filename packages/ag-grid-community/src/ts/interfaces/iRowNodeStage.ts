@@ -5,8 +5,10 @@ import {ChangedPath} from "../rowModels/clientSide/changedPath";
 export interface StageExecuteParams {
     rowNode: RowNode;
     rowNodeTransaction?: RowNodeTransaction;
-    rowNodeOrder?: {[id: string]: number};
+    rowNodeTransactions?: RowNodeTransaction[];
+    rowNodeOrder?: { [id: string]: number };
     changedPath?: ChangedPath;
+    reportSortTiming?: boolean;
 }
 
 export interface IRowNodeStage {

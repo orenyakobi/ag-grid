@@ -189,6 +189,9 @@ export class RowNode implements IEventEmitter {
     private selected = false;
     private eventService: EventService;
 
+    /** when Updating data, we keep old, for sorting comparison */
+    public oldData?: any;
+
     public setData(data: any): void {
         let oldData = this.data;
         this.data = data;
@@ -201,6 +204,10 @@ export class RowNode implements IEventEmitter {
 
         let event: DataChangedEvent = this.createDataChangedEvent(data, oldData, false);
         this.dispatchLocalEvent(event);
+    }
+
+    public getOldData() {
+        return this.oldData || {};
     }
 
     // when we are doing master / detail, the detail node is lazy created, but then kept around.
@@ -236,6 +243,7 @@ export class RowNode implements IEventEmitter {
     // dataChanged event, will refresh the cells rather than rip them all out (so user can show transitions).
     public updateData(data: any): void {
         let oldData = this.data;
+        this.oldData = oldData;
         this.data = data;
 
         this.updateDataOnDetailNode();

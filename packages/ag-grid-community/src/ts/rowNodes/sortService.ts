@@ -2,10 +2,12 @@ import {RowNode} from "../entities/rowNode";
 import {Column} from "../entities/column";
 import {Autowired, Bean, PostConstruct} from "../context/context";
 import {SortController} from "../sortController";
+import {SortServiceSupport} from './sortServiceSupport';
 import {_} from "../utils";
 import {ValueService} from "../valueService/valueService";
 import {GridOptionsWrapper} from "../gridOptionsWrapper";
 import {ColumnController} from "../columnController/columnController";
+import {StageExecuteParams} from "../interfaces/iRowNodeStage";
 
 export interface SortOption {
     inverter: number;
@@ -26,18 +28,48 @@ export class SortService {
     @Autowired('gridOptionsWrapper') private gridOptionsWrapper: GridOptionsWrapper;
 
     private postSortFunc: (rowNodes: RowNode[]) => void;
+    private sortServiceSupport: SortServiceSupport;
 
     @PostConstruct
     public init(): void {
         this.postSortFunc = this.gridOptionsWrapper.getPostSortFunc();
+        this.sortServiceSupport = new SortServiceSupport(this.valueService, this.gridOptionsWrapper);
     }
 
-    public sortAccordingToColumnsState(rowNode: RowNode) {
+    public sortAccordingToColumnsState(rowNode: RowNode, params: StageExecuteParams) {
         let sortOptions: SortOption[] = this.sortController.getSortForRowController();
-        this.sort(rowNode, sortOptions);
+        this.sort(rowNode, sortOptions, params);
     }
 
-    public sort(rowNode: RowNode, sortOptions: SortOption[]) {
+    public sort(rowNode: RowNode, sortOptions: SortOption[], params: StageExecuteParams = null) {
+        let shouldTimeExecution = !!params && params.reportSortTiming && rowNode.parent == null;
+        let start = new Date();
+        let fullSorting = this.sortServiceSupport.shouldReSort(rowNode, params);
+        if (fullSorting) {
+            this.fullSort(rowNode, sortOptions);
+        } else {
+            this.deltaSort(rowNode, sortOptions, params);
+        }
+        // After sort, sort children and
+        rowNode.childrenAfterFilter.forEach(child => {
+            if (child.hasChildren()) {
+                this.sort(child, sortOptions, params);
+            }
+            delete child.oldData;
+        });
+        delete rowNode.oldData;
+
+        if (this.postSortFunc) {
+            this.postSortFunc(rowNode.childrenAfterSort);
+        }
+        let end = new Date();
+        if (shouldTimeExecution) {
+            console.log(`Total time to ${fullSorting ? 'Full Sorting' : 'Partial Sorting'} ROWID ${rowNode.id} was ${end.getTime() - start.getTime()}ms`);
+        }
+
+    }
+
+    public fullSort(rowNode: RowNode, sortOptions: SortOption[]) {
         rowNode.childrenAfterSort = rowNode.childrenAfterFilter.slice(0);
 
         // we clear out the 'pull down open parents' first, as the values mix up the sorting
@@ -53,57 +85,28 @@ export class SortService {
             let sortedRowNodes: SortedRowNode[] = rowNode.childrenAfterSort.map((it, pos) => {
                 return {currentPos: pos, rowNode: it};
             });
-            sortedRowNodes.sort(this.compareRowNodes.bind(this, sortOptions));
+            sortedRowNodes.sort(this.compareSortedRowNodes.bind(this, sortOptions));
             rowNode.childrenAfterSort = sortedRowNodes.map(sorted => sorted.rowNode);
         }
 
         this.updateChildIndexes(rowNode);
         this.pullDownDataForHideOpenParents(rowNode, false);
 
-        // sort any groups recursively
-        rowNode.childrenAfterFilter.forEach(child => {
-            if (child.hasChildren()) {
-                this.sort(child, sortOptions);
-            }
-        });
-
-        if (this.postSortFunc) {
-            this.postSortFunc(rowNode.childrenAfterSort);
-        }
     }
 
-    private compareRowNodes(sortOptions: any, sortedNodeA: SortedRowNode, sortedNodeB: SortedRowNode) {
+    private compareSortedRowNodes(sortOptions: any, sortedNodeA: SortedRowNode, sortedNodeB: SortedRowNode): number {
         let nodeA: RowNode = sortedNodeA.rowNode;
         let nodeB: RowNode = sortedNodeB.rowNode;
 
-        // Iterate columns, return the first that doesn't match
-        for (let i = 0, len = sortOptions.length; i < len; i++) {
-            let sortOption = sortOptions[i];
-            // let compared = compare(nodeA, nodeB, sortOption.column, sortOption.inverter === -1);
-
-            let isInverted = sortOption.inverter === -1;
-            let valueA: any = this.getValue(nodeA, sortOption.column);
-            let valueB: any = this.getValue(nodeB, sortOption.column);
-            let comparatorResult: number;
-            if (sortOption.column.getColDef().comparator) {
-                //if comparator provided, use it
-                comparatorResult = sortOption.column.getColDef().comparator(valueA, valueB, nodeA, nodeB, isInverted);
-            } else {
-                //otherwise do our own comparison
-                comparatorResult = _.defaultComparator(valueA, valueB, this.gridOptionsWrapper.isAccentedSort());
-            }
-
-            if (comparatorResult !== 0) {
-                return comparatorResult * sortOption.inverter;
-            }
-        }
+        let dataCompare = this.compareRowNodes(sortOptions, nodeA, nodeB);
         // All matched, we make is so that the original sort order is kept:
-        return sortedNodeA.currentPos - sortedNodeB.currentPos;
+        return dataCompare === 0 ? sortedNodeA.currentPos - sortedNodeB.currentPos : dataCompare;
     }
 
-    private getValue(nodeA: RowNode, column: Column): string {
-        return this.valueService.getValue(column, nodeA);
+    private compareRowNodes(sortOptions: SortOption[], nodeA: RowNode, nodeB: RowNode) {
+        return this.sortServiceSupport.compareRowNodes(sortOptions, nodeA, nodeB);
     }
+
 
     private updateChildIndexes(rowNode: RowNode) {
         if (_.missing(rowNode.childrenAfterSort)) {
@@ -128,10 +131,10 @@ export class SortService {
             return;
         }
 
-        rowNode.childrenAfterSort.forEach( childRowNode => {
+        rowNode.childrenAfterSort.forEach(childRowNode => {
 
             let groupDisplayCols = this.columnController.getGroupDisplayColumns();
-            groupDisplayCols.forEach( groupDisplayCol => {
+            groupDisplayCols.forEach(groupDisplayCol => {
 
                 let showRowGroup = groupDisplayCol.getColDef().showRowGroup;
                 if (typeof showRowGroup !== 'string') {
@@ -143,7 +146,9 @@ export class SortService {
                 let rowGroupColumn = this.columnController.getPrimaryColumn(displayingGroupKey);
 
                 let thisRowNodeMatches = rowGroupColumn === childRowNode.rowGroupColumn;
-                if (thisRowNodeMatches) { return; }
+                if (thisRowNodeMatches) {
+                    return;
+                }
 
                 if (clearOperation) {
                     // if doing a clear operation, we clear down the value for every possible group column
@@ -159,4 +164,45 @@ export class SortService {
         });
     }
 
+
+    private deltaSort(rowNode: RowNode, sortOptions: SortOption[], params: StageExecuteParams) {
+        this.pullDownDataForHideOpenParents(rowNode, true);
+
+        let indexedAfterFilter = this.sortServiceSupport.indexByRowNodeId(rowNode.childrenAfterFilter);
+        let indexedCurrentSorting = this.sortServiceSupport.indexByRowNodeId(rowNode.childrenAfterSort);
+        Object.keys(indexedAfterFilter).forEach(rowNodeId => {
+            let inSorting = indexedCurrentSorting[rowNodeId];
+            if (inSorting) {
+                delete indexedAfterFilter[rowNodeId];
+                delete indexedCurrentSorting[rowNodeId];
+            }
+        });
+        // remove left over inSorting that were not in filtering
+        Object.keys(indexedCurrentSorting).forEach(rowNodeId => {
+            let inSorting = indexedCurrentSorting[rowNodeId];
+            rowNode.childrenAfterSort.splice(inSorting.index, 1);
+        });
+        // reindex for update and move
+        let updateNodes = this.sortServiceSupport.collectUpdates(params);
+        updateNodes.forEach((value => {
+            let currentIndexInSort = rowNode.childrenAfterSort.indexOf(value);
+            // we have to have more than 1 in the sort yo update it ...
+            if (rowNode.childrenAfterSort.length > 1 && rowNode.childrenAfterFilter.indexOf(value) !== -1 && currentIndexInSort !== -1) { // if included in our nodeAfterFilter and in our current sort
+                if (this.sortServiceSupport.sortValueChanged(value, sortOptions)) {
+                    let updatedRow = rowNode.childrenAfterSort.splice(currentIndexInSort, 1)[0];
+                    this.sortServiceSupport.placeRowNode(sortOptions, updatedRow, rowNode.childrenAfterSort,
+                        0, rowNode.childrenAfterSort.length - 1);
+                }
+            }
+        }));
+        Object.keys(indexedAfterFilter).forEach(rowNodeId => {
+            let rowToInsert = indexedAfterFilter[rowNodeId];
+            this.sortServiceSupport.placeRowNode(sortOptions, rowToInsert.node, rowNode.childrenAfterSort,
+                0, rowNode.childrenAfterSort.length - 1);
+        });
+        this.pullDownDataForHideOpenParents(rowNode, false);
+        this.updateChildIndexes(rowNode);
+
+
+    }
 }

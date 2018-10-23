@@ -38,6 +38,10 @@ export interface RefreshModelParams {
     // true user called setRowData() (or a new page in pagination). the grid scrolls
     // back to the top when this is true.
     newData?: boolean;
+    // what is this?
+    timeSort?:boolean;
+    // what is this?
+    forceFullSort?:boolean;
 }
 
 export interface RowDataTransaction {
@@ -45,12 +49,16 @@ export interface RowDataTransaction {
     add?: any[];
     remove?: any[];
     update?: any[];
+    timeSort?: boolean;
+    forceFullSort? : boolean;
 }
 
 export interface RowNodeTransaction {
     add: RowNode[];
     remove: RowNode[];
     update: RowNode[];
+    timeSort?: boolean;
+    forceFullSort? : boolean;
 }
 
 export interface BatchTransactionItem {
@@ -246,8 +254,8 @@ export class ClientSideRowModel {
                 // console.log('aggregation = ' + (new Date().getTime() - start));
             case constants.STEP_SORT:
                 // start = new Date().getTime();
-                this.doSort();
-                // console.log('sort = ' + (new Date().getTime() - start));
+                this.doSort(params.rowNodeTransactions);
+            // console.log('sort = ' + (new Date().getTime() - start));
             case constants.STEP_MAP:
                 // start = new Date().getTime();
                 this.doRowsToDisplay();
@@ -517,8 +525,12 @@ export class ClientSideRowModel {
         this.eventService.dispatchEvent(event);
     }
 
-    private doSort() {
-        this.sortStage.execute({rowNode: this.rootNode});
+    private doSort(rowNodeTransactions: RowNodeTransaction[]) {
+        this.sortStage.execute({
+            rowNode: this.rootNode,
+            rowNodeTransactions,
+            reportSortTiming: !!rowNodeTransactions && rowNodeTransactions.some(x => x.timeSort)
+        });
     }
 
     private doRowGrouping(groupState: any,
@@ -679,7 +691,10 @@ export class ClientSideRowModel {
             rowNodeOrder: rowNodeOrder,
             keepRenderedRows: true,
             animate: true,
-            keepEditingRows: true
+            keepEditingRows: true,
+            timeSort: rowNodeTrans.some(x => x.timeSort),
+            forceFullSort : rowNodeTrans.some(x => x.forceFullSort),
+
         });
 
         let event: RowDataUpdatedEvent = {
